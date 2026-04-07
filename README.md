@@ -57,7 +57,7 @@ func main() {
 	defer c.AS.Close()
 
 	// Send a message to another socket
-	c.AS.Send("as:other-socket-id", map[string]string{
+	c.AS.Send(ctx, "as:other-socket-id", map[string]string{
 		"text": "hello from my-agent",
 	})
 

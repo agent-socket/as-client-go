@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"sync"
 
 	"github.com/agent-socket/as-client-go/types"
-	"github.com/gorilla/websocket"
+	"github.com/coder/websocket"
+	"github.com/coder/websocket/wsjson"
 )
 
 const (
@@ -22,16 +24,16 @@ const (
 )
 
 var errNotConnected = errors.New("not connected")
-var errAlreadyConnected = errors.New("already connected")
+var errAlreadyDialed = errors.New("already connected")
 
 // Client is the event-driven WebSocket client for agent-socket.
 type Client struct {
 	endpoint string
 	token    string
-	dialer   *websocket.Dialer
 
 	mu       sync.Mutex
 	conn     *websocket.Conn
+	dialing  bool
 	handlers *handlers
 	done     chan struct{}
 	closed   chan struct{} // always non-nil, acts as default "not connected" sentinel
@@ -44,7 +46,6 @@ func New(endpoint, token string) *Client {
 	return &Client{
 		endpoint: endpoint,
 		token:    token,
-		dialer:   websocket.DefaultDialer,
 		handlers: newHandlers(),
 		closed:   closed,
 		done:     closed, // done starts as closed (not connected)
@@ -91,17 +92,25 @@ func (c *Client) ConnectEphemeral(ctx context.Context) error {
 
 func (c *Client) dial(ctx context.Context, url string) error {
 	c.mu.Lock()
-	if c.conn != nil {
+	if c.conn != nil || c.dialing {
 		c.mu.Unlock()
-		return errAlreadyConnected
+		return errAlreadyDialed
 	}
+	c.dialing = true
 	c.mu.Unlock()
 
-	header := http.Header{}
-	header.Set(authHeaderKey, bearerPrefix+c.token)
-
-	conn, _, err := c.dialer.DialContext(ctx, url, header)
+	conn, resp, err := websocket.Dial(ctx, url, &websocket.DialOptions{
+		HTTPHeader: http.Header{
+			authHeaderKey: []string{bearerPrefix + c.token},
+		},
+	})
 	if err != nil {
+		c.mu.Lock()
+		c.dialing = false
+		c.mu.Unlock()
+		if serverErr := parseDialError(resp); serverErr != nil {
+			return serverErr
+		}
 		return fmt.Errorf("websocket dial: %w", err)
 	}
 
@@ -110,9 +119,12 @@ func (c *Client) dial(ctx context.Context, url string) error {
 	c.mu.Lock()
 	c.conn = conn
 	c.done = done
+	c.dialing = false
 	c.mu.Unlock()
 
-	go c.readLoop(conn, done)
+	// Use a detached context for the read loop — the dial context governs
+	// only the handshake. The connection lifetime is independent.
+	go c.readLoop(context.Background(), conn, done)
 
 	return nil
 }
@@ -128,22 +140,12 @@ func (c *Client) Close() error {
 		return nil
 	}
 
-	// Send close frame under the mutex to prevent concurrent writes.
-	// The writeLocked helper serializes with Send/SendRaw.
-	err := c.writeLocked(conn, func() error {
-		return conn.WriteMessage(
-			websocket.CloseMessage,
-			websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
-		)
-	})
+	err := conn.Close(websocket.StatusNormalClosure, "")
 	if err != nil {
-		// Force close if we can't send the close frame.
-		conn.Close()
 		<-done
 		return err
 	}
 
-	// Wait for readLoop to finish.
 	<-done
 	return nil
 }
@@ -156,10 +158,9 @@ func (c *Client) Done() <-chan struct{} {
 	return c.done
 }
 
-// writeConn acquires the write lock, verifies the connection is still active,
-// and performs the write atomically. This eliminates the TOCTOU race between
-// checking c.conn and writing to it.
-func (c *Client) writeConn(fn func(conn *websocket.Conn) error) error {
+// writeJSON sends a JSON message on the connection. coder/websocket handles
+// concurrent writes safely, so no external serialization is needed.
+func (c *Client) writeJSON(ctx context.Context, v any) error {
 	c.mu.Lock()
 	conn := c.conn
 	c.mu.Unlock()
@@ -168,52 +169,31 @@ func (c *Client) writeConn(fn func(conn *websocket.Conn) error) error {
 		return errNotConnected
 	}
 
-	return c.writeLocked(conn, func() error {
-		return fn(conn)
-	})
-}
-
-// writeLocked serializes a write operation. All writes to the websocket
-// connection must go through this to satisfy gorilla/websocket's concurrency
-// contract (no concurrent writers).
-func (c *Client) writeLocked(conn *websocket.Conn, fn func() error) error {
-	// We use the connection's own mutex-like behavior by holding c.mu briefly
-	// to get the conn pointer, then use a dedicated write serializer.
-	// Since gorilla/websocket doesn't support concurrent writes, we serialize
-	// all writes through this path.
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	// Re-check that the connection hasn't been replaced or nilled out.
-	if c.conn != conn {
-		return errNotConnected
-	}
-
-	return fn()
+	return wsjson.Write(ctx, conn, v)
 }
 
 // readLoop reads messages from the WebSocket connection and dispatches events.
 // It owns the given conn and done channel — when it exits, it cleans up both.
-func (c *Client) readLoop(conn *websocket.Conn, done chan struct{}) {
+func (c *Client) readLoop(ctx context.Context, conn *websocket.Conn, done chan struct{}) {
 	defer func() {
 		c.mu.Lock()
-		// Only nil out c.conn if it's still the connection we own.
 		if c.conn == conn {
 			c.conn = nil
 			c.done = c.closed
 		}
 		c.mu.Unlock()
 
-		conn.Close()
+		conn.CloseNow()
 		close(done)
 	}()
 
 	connectedEmitted := false
 
 	for {
-		_, rawMsg, err := conn.ReadMessage()
+		_, rawMsg, err := conn.Read(ctx)
 		if err != nil {
-			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+			closeStatus := websocket.CloseStatus(err)
+			if closeStatus == websocket.StatusNormalClosure || closeStatus == websocket.StatusGoingAway {
 				c.handlers.emitDisconnected(DisconnectedEvent{})
 			} else {
 				c.handlers.emitError(ErrorEvent{Err: err})
@@ -223,7 +203,8 @@ func (c *Client) readLoop(conn *websocket.Conn, done chan struct{}) {
 		}
 
 		var serverMsg types.ServerMessage
-		if json.Unmarshal(rawMsg, &serverMsg) != nil {
+		if err := json.Unmarshal(rawMsg, &serverMsg); err != nil {
+			c.handlers.emitError(ErrorEvent{Err: fmt.Errorf("unmarshal server message: %w", err)})
 			continue
 		}
 
@@ -249,4 +230,29 @@ func (c *Client) readLoop(conn *websocket.Conn, done chan struct{}) {
 			})
 		}
 	}
+}
+
+// parseDialError attempts to parse a standardized server error from a failed
+// WebSocket dial response. Returns nil if the response is nil or unparseable.
+func parseDialError(resp *http.Response) error {
+	if resp == nil || resp.Body == nil {
+		return nil
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read server error response: %w", err)
+	}
+
+	var serverErr types.ServerError
+	if json.Unmarshal(body, &serverErr) != nil {
+		return nil
+	}
+	if serverErr.ErrorCode == "" {
+		return nil
+	}
+
+	serverErr.StatusCode = resp.StatusCode
+	return &serverErr
 }
