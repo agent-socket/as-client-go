@@ -16,8 +16,9 @@ import (
 )
 
 type config struct {
-	APIToken    string `json:"api_token"`
-	AgentSocket string `json:"agent_socket"`
+	APIToken     string `json:"api_token"`
+	AgentSocket  string `json:"agent_socket"`
+	ChattySocket string `json:"chatty_socket"`
 }
 
 var messages = [...]string{
@@ -136,10 +137,14 @@ func main() {
 		log.Fatalf("failed to load config: %v", err)
 	}
 
+	if cfg.ChattySocket == "" {
+		log.Fatalf("chatty_socket is required in config.json")
+	}
+
 	c := asclient.New(cfg.APIToken)
 
 	c.AS.OnConnected(func(evt as.ConnectedEvent) {
-		log.Printf("connected as %s, will chat with %s", evt.SocketID, targetSocket)
+		log.Printf("connected as %s, will chat with %s", cfg.ChattySocket, targetSocket)
 	})
 
 	c.AS.OnMessage(func(msg types.IncomingMessage) {
@@ -164,7 +169,7 @@ func main() {
 	})
 
 	ctx := context.Background()
-	if err := c.AS.ConnectEphemeral(ctx); err != nil {
+	if err := c.AS.Connect(ctx, cfg.ChattySocket); err != nil {
 		log.Fatalf("failed to connect: %v", err)
 	}
 	defer c.AS.Close()
