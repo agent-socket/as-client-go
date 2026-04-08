@@ -19,8 +19,8 @@ const (
 	bearerPrefix  = "Bearer "
 
 	// Wire protocol message types from the server.
-	wireTypeConnected = "connected"
 	wireTypeHeartbeat = "heartbeat"
+	wireTypeError     = "error"
 )
 
 var errNotConnected = errors.New("not connected")
@@ -83,13 +83,6 @@ func (c *Client) Connect(ctx context.Context, socketID string) error {
 	return c.dial(ctx, url)
 }
 
-// ConnectEphemeral opens a WebSocket connection for an ephemeral socket.
-// The assigned socket ID is delivered via the Connected event.
-func (c *Client) ConnectEphemeral(ctx context.Context) error {
-	url := fmt.Sprintf("%s/es", c.endpoint)
-	return c.dial(ctx, url)
-}
-
 func (c *Client) dial(ctx context.Context, url string) error {
 	c.mu.Lock()
 	if c.conn != nil || c.dialing {
@@ -121,6 +114,8 @@ func (c *Client) dial(ctx context.Context, url string) error {
 	c.done = done
 	c.dialing = false
 	c.mu.Unlock()
+
+	c.handlers.emitConnected(ConnectedEvent{})
 
 	// Use a detached context for the read loop — the dial context governs
 	// only the handshake. The connection lifetime is independent.
@@ -187,8 +182,6 @@ func (c *Client) readLoop(ctx context.Context, conn *websocket.Conn, done chan s
 		close(done)
 	}()
 
-	connectedEmitted := false
-
 	for {
 		_, rawMsg, err := conn.Read(ctx)
 		if err != nil {
@@ -209,21 +202,19 @@ func (c *Client) readLoop(ctx context.Context, conn *websocket.Conn, done chan s
 		}
 
 		switch {
-		case serverMsg.Type == wireTypeConnected:
-			var connected types.ConnectedMessage
-			if json.Unmarshal(rawMsg, &connected) == nil {
-				connectedEmitted = true
-				c.handlers.emitConnected(ConnectedEvent{SocketID: connected.SocketID})
+		case serverMsg.Type == wireTypeError:
+			var errFrame types.ErrorFrame
+			if json.Unmarshal(rawMsg, &errFrame) == nil {
+				c.handlers.emitError(ErrorEvent{
+					Err:  fmt.Errorf("[%s] %s", errFrame.Code, errFrame.Message),
+					Code: errFrame.Code,
+				})
 			}
 
 		case serverMsg.Type == wireTypeHeartbeat:
 			c.handlers.emitHeartbeat(HeartbeatEvent{Data: serverMsg.Data})
 
 		case serverMsg.From != "":
-			if !connectedEmitted {
-				connectedEmitted = true
-				c.handlers.emitConnected(ConnectedEvent{})
-			}
 			c.handlers.emitMessage(types.IncomingMessage{
 				From: serverMsg.From,
 				Data: serverMsg.Data,

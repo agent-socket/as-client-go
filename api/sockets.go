@@ -27,6 +27,13 @@ func (c *Client) CreateSocketAsync(ctx context.Context, req *types.CreateSocketR
 	}()
 }
 
+// DeleteSocket deletes an offline socket by ID.
+// Returns an error if the socket is connected, not found, or not owned by the caller.
+func (c *Client) DeleteSocket(ctx context.Context, socketID string) error {
+	path := fmt.Sprintf("%s/%s", socketsPath, socketID)
+	return c.transport.DoNoContent(ctx, "DELETE", path, nil)
+}
+
 // ListSockets lists all sockets for the authenticated account.
 func (c *Client) ListSockets(ctx context.Context) ([]types.Socket, error) {
 	var sockets []types.Socket

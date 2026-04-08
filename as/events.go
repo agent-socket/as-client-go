@@ -25,18 +25,19 @@ const (
 )
 
 // ConnectedEvent is emitted when the WebSocket connection is established.
-type ConnectedEvent struct {
-	SocketID string // populated for ephemeral sockets
-}
+type ConnectedEvent struct{}
 
 // DisconnectedEvent is emitted when the WebSocket connection is closed.
 type DisconnectedEvent struct {
 	Err error // nil for clean close
 }
 
-// ErrorEvent is emitted when a connection error occurs.
+// ErrorEvent is emitted when a connection error occurs or the server
+// sends an error frame (e.g. access denied, socket not found).
+// Code is populated only for server error frames.
 type ErrorEvent struct {
-	Err error
+	Err  error
+	Code string // server error code (e.g. "E3001"), empty for connection errors
 }
 
 // HeartbeatEvent is emitted when a heartbeat is received.

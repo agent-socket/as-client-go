@@ -14,12 +14,6 @@ type IncomingMessage struct {
 	Data json.RawMessage `json:"data"`
 }
 
-// ConnectedMessage is sent by the server after an ephemeral socket connects.
-type ConnectedMessage struct {
-	Type     string `json:"type"`
-	SocketID string `json:"socket_id"`
-}
-
 // HeartbeatMessage is sent by the server periodically.
 type HeartbeatMessage struct {
 	Type string          `json:"type"`
@@ -31,4 +25,12 @@ type ServerMessage struct {
 	Type string          `json:"type,omitempty"`
 	From string          `json:"from,omitempty"`
 	Data json.RawMessage `json:"data,omitempty"`
+}
+
+// ErrorFrame is a server-to-client error sent when a message cannot be
+// processed or delivered. Identified by type="error".
+type ErrorFrame struct {
+	Type    string `json:"type"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
 }
