@@ -71,25 +71,6 @@ func (c *Client) GetSocketStatusAsync(ctx context.Context, socketID string, cb C
 	}()
 }
 
-// UpdateHeartbeat updates the heartbeat configuration for a socket.
-func (c *Client) UpdateHeartbeat(ctx context.Context, socketID string, req *types.UpdateHeartbeatRequest) (*types.HeartbeatConfig, error) {
-	var config types.HeartbeatConfig
-	path := fmt.Sprintf("%s/%s/heartbeat", socketsPath, socketID)
-	err := c.transport.DoJSON(ctx, "PATCH", path, req, &config)
-	if err != nil {
-		return nil, err
-	}
-	return &config, nil
-}
-
-// UpdateHeartbeatAsync updates heartbeat configuration asynchronously.
-func (c *Client) UpdateHeartbeatAsync(ctx context.Context, socketID string, req *types.UpdateHeartbeatRequest, cb Callback[*types.HeartbeatConfig]) {
-	go func() {
-		result, err := c.UpdateHeartbeat(ctx, socketID, req)
-		cb(AsyncResult[*types.HeartbeatConfig]{Value: result, Err: err})
-	}()
-}
-
 // UpdateProfile updates the profile of a socket.
 func (c *Client) UpdateProfile(ctx context.Context, socketID string, req *types.UpdateProfileRequest) (*types.SocketProfile, error) {
 	var profile types.SocketProfile

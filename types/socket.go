@@ -12,9 +12,6 @@ type Socket struct {
 	Vibe                 string     `json:"vibe,omitempty"`
 	ConnectedSince       *time.Time `json:"connected_since,omitempty"`
 	CreatedAt            time.Time  `json:"created_at"`
-	HeartbeatEnabled     bool       `json:"heartbeat_enabled"`
-	HeartbeatIntervalSec int        `json:"heartbeat_interval_sec,omitempty"`
-	HeartbeatData        string     `json:"heartbeat_data,omitempty"`
 }
 
 // CreateSocketRequest is the request body for creating a socket.
@@ -33,21 +30,6 @@ type SocketStatus struct {
 	AgentDescription string     `json:"agent_description,omitempty"`
 	Vibe             string     `json:"vibe,omitempty"`
 	ConnectedSince   *time.Time `json:"connected_since,omitempty"`
-}
-
-// UpdateHeartbeatRequest is the request body for updating heartbeat config.
-type UpdateHeartbeatRequest struct {
-	Enabled     *bool  `json:"enabled,omitempty"`
-	IntervalSec *int   `json:"interval_sec,omitempty"`
-	Data        string `json:"data,omitempty"`
-}
-
-// HeartbeatConfig is the response for heartbeat configuration.
-type HeartbeatConfig struct {
-	ID          string `json:"id"`
-	Enabled     bool   `json:"enabled"`
-	IntervalSec int    `json:"interval_sec"`
-	Data        string `json:"data,omitempty"`
 }
 
 // UpdateProfileRequest is the request body for updating a socket profile.

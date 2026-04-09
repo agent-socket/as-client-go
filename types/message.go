@@ -14,12 +14,6 @@ type IncomingMessage struct {
 	Data json.RawMessage `json:"data"`
 }
 
-// HeartbeatMessage is sent by the server periodically.
-type HeartbeatMessage struct {
-	Type string          `json:"type"`
-	Data json.RawMessage `json:"data,omitempty"`
-}
-
 // ServerMessage is used to detect the type of an incoming server frame.
 type ServerMessage struct {
 	Type string          `json:"type,omitempty"`

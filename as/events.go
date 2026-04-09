@@ -1,7 +1,6 @@
 package as
 
 import (
-	"encoding/json"
 	"sync"
 
 	"github.com/agent-socket/as-client-go/types"
@@ -18,8 +17,6 @@ const (
 	EventConnected Event = "connected"
 	// EventDisconnected fires when the WebSocket connection is closed.
 	EventDisconnected Event = "disconnected"
-	// EventHeartbeat fires when a heartbeat message is received from the server.
-	EventHeartbeat Event = "heartbeat"
 	// EventError fires when a read/write error occurs on the connection.
 	EventError Event = "error"
 )
@@ -40,11 +37,6 @@ type ErrorEvent struct {
 	Code string // server error code (e.g. "E3001"), empty for connection errors
 }
 
-// HeartbeatEvent is emitted when a heartbeat is received.
-type HeartbeatEvent struct {
-	Data json.RawMessage
-}
-
 // MessageHandler handles incoming messages.
 type MessageHandler func(types.IncomingMessage)
 
@@ -53,9 +45,6 @@ type ConnectedHandler func(ConnectedEvent)
 
 // DisconnectedHandler handles disconnection events.
 type DisconnectedHandler func(DisconnectedEvent)
-
-// HeartbeatHandler handles heartbeat events.
-type HeartbeatHandler func(HeartbeatEvent)
 
 // ErrorHandler handles error events.
 type ErrorHandler func(ErrorEvent)
@@ -66,7 +55,6 @@ type handlers struct {
 	message       []MessageHandler
 	connected     []ConnectedHandler
 	disconnected  []DisconnectedHandler
-	heartbeat     []HeartbeatHandler
 	errorHandlers []ErrorHandler
 }
 
@@ -90,12 +78,6 @@ func (h *handlers) onDisconnected(fn DisconnectedHandler) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.disconnected = append(h.disconnected, fn)
-}
-
-func (h *handlers) onHeartbeat(fn HeartbeatHandler) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.heartbeat = append(h.heartbeat, fn)
 }
 
 func (h *handlers) onError(fn ErrorHandler) {
@@ -128,16 +110,6 @@ func (h *handlers) emitDisconnected(evt DisconnectedEvent) {
 	h.mu.RLock()
 	fns := make([]DisconnectedHandler, len(h.disconnected))
 	copy(fns, h.disconnected)
-	h.mu.RUnlock()
-	for _, fn := range fns {
-		fn(evt)
-	}
-}
-
-func (h *handlers) emitHeartbeat(evt HeartbeatEvent) {
-	h.mu.RLock()
-	fns := make([]HeartbeatHandler, len(h.heartbeat))
-	copy(fns, h.heartbeat)
 	h.mu.RUnlock()
 	for _, fn := range fns {
 		fn(evt)

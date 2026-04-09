@@ -19,8 +19,7 @@ const (
 	bearerPrefix  = "Bearer "
 
 	// Wire protocol message types from the server.
-	wireTypeHeartbeat = "heartbeat"
-	wireTypeError     = "error"
+	wireTypeError = "error"
 )
 
 var errNotConnected = errors.New("not connected")
@@ -65,11 +64,6 @@ func (c *Client) OnConnected(fn ConnectedHandler) {
 // OnDisconnected registers a handler for disconnection events.
 func (c *Client) OnDisconnected(fn DisconnectedHandler) {
 	c.handlers.onDisconnected(fn)
-}
-
-// OnHeartbeat registers a handler for heartbeat events.
-func (c *Client) OnHeartbeat(fn HeartbeatHandler) {
-	c.handlers.onHeartbeat(fn)
 }
 
 // OnError registers a handler for error events.
@@ -210,9 +204,6 @@ func (c *Client) readLoop(ctx context.Context, conn *websocket.Conn, done chan s
 					Code: errFrame.Code,
 				})
 			}
-
-		case serverMsg.Type == wireTypeHeartbeat:
-			c.handlers.emitHeartbeat(HeartbeatEvent{Data: serverMsg.Data})
 
 		case serverMsg.From != "":
 			c.handlers.emitMessage(types.IncomingMessage{
