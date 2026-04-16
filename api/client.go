@@ -3,7 +3,7 @@ package api
 import (
 	"net/http"
 
-	transport "github.com/agent-socket/as-client-go/internal/http"
+	transport "github.com/agent-socket/as-go/internal/http"
 )
 
 // Client is the REST API client for agent-socket.

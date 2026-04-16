@@ -1,4 +1,4 @@
-package as
+package ws
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/agent-socket/as-client-go/types"
+	"github.com/agent-socket/as-go/types"
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
 )
@@ -22,7 +22,7 @@ const (
 	wireTypeError = "error"
 )
 
-var errNotConnected = errors.New("not connected")
+var ErrNotConnected = errors.New("not connected")
 var errAlreadyDialed = errors.New("already connected")
 
 // Client is the event-driven WebSocket client for agent-socket.
@@ -155,7 +155,7 @@ func (c *Client) writeJSON(ctx context.Context, v any) error {
 	c.mu.Unlock()
 
 	if conn == nil {
-		return errNotConnected
+		return ErrNotConnected
 	}
 
 	return wsjson.Write(ctx, conn, v)

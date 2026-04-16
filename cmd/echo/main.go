@@ -1,17 +1,21 @@
+// echo is the canonical Agent Socket demo: connects as an agent and
+// echoes every message it receives back to the sender.
+//
+//	go run ./cmd/echo config.json
+//
+// config.json is a two-field JSON file:
+//
+//	{ "api_token": "sk_...", "agent_socket": "as:acme/echo" }
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
-	"time"
 
-	asclient "github.com/agent-socket/as-client-go"
-	"github.com/agent-socket/as-client-go/as"
-	"github.com/agent-socket/as-client-go/types"
+	"github.com/agent-socket/as-go"
 )
 
 type config struct {
@@ -24,64 +28,29 @@ func main() {
 	if len(os.Args) > 1 {
 		cfgPath = os.Args[1]
 	}
-
 	cfg, err := loadConfig(cfgPath)
 	if err != nil {
-		log.Fatalf("failed to load config: %v", err)
+		log.Fatalf("load config: %v", err)
 	}
 
-	c := asclient.New(cfg.APIToken)
-
-	c.AS.OnConnected(func(evt as.ConnectedEvent) {
-		log.Printf("connected to %s", cfg.AgentSocket)
-	})
-
-	c.AS.OnMessage(func(msg types.IncomingMessage) {
-		var payload any
-		if err := json.Unmarshal(msg.Data, &payload); err != nil {
-			log.Printf("failed to unmarshal message: %v", err)
+	agent := as.Connect(cfg.APIToken, cfg.AgentSocket, func(m as.Message) {
+		if m.Err != nil {
+			log.Printf("error: %v", m.Err)
 			return
 		}
-
-		log.Printf("message from %s: %s", msg.From, string(msg.Data))
-
-		reply := map[string]any{
-			"echo": payload,
-			"time": time.Now().UTC().Format(time.RFC3339),
-		}
-
-		if err := c.AS.Send(context.Background(), msg.From, reply); err != nil {
-			log.Printf("failed to send reply: %v", err)
+		log.Printf("from %s: %s", m.From, m.Data)
+		if err := m.Reply(map[string]any{"echo": json.RawMessage(m.Data)}); err != nil {
+			log.Printf("reply: %v", err)
 		}
 	})
+	defer agent.Close()
 
-	c.AS.OnError(func(evt as.ErrorEvent) {
-		log.Printf("error: %v", evt.Err)
-	})
-
-	c.AS.OnDisconnected(func(evt as.DisconnectedEvent) {
-		if evt.Err != nil {
-			log.Printf("disconnected with error: %v", evt.Err)
-		} else {
-			log.Println("disconnected")
-		}
-	})
-
-	ctx := context.Background()
-	if err := c.AS.Connect(ctx, cfg.AgentSocket); err != nil {
-		log.Fatalf("failed to connect: %v", err)
-	}
-	defer c.AS.Close()
-
-	log.Println("listening for messages (ctrl+c to quit)")
-
+	log.Printf("listening as %s (ctrl+c to quit)", cfg.AgentSocket)
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt)
-
 	select {
 	case <-sig:
-		log.Println("shutting down")
-	case <-c.AS.Done():
+	case <-agent.Done():
 	}
 }
 
@@ -90,18 +59,12 @@ func loadConfig(path string) (*config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
-
 	var cfg config
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
-
-	if cfg.APIToken == "" {
-		return nil, fmt.Errorf("api_token is required in %s", path)
+	if cfg.APIToken == "" || cfg.AgentSocket == "" {
+		return nil, fmt.Errorf("%s must set api_token and agent_socket", path)
 	}
-	if cfg.AgentSocket == "" {
-		return nil, fmt.Errorf("agent_socket is required in %s", path)
-	}
-
 	return &cfg, nil
 }

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/agent-socket/as-client-go/types"
+	"github.com/agent-socket/as-go/types"
 )
 
 const socketsPath = "/sockets"

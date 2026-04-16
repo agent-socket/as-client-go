@@ -8,7 +8,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/agent-socket/as-client-go/types"
+	"github.com/agent-socket/as-go/types"
 )
 
 const (

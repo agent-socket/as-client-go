@@ -3,7 +3,7 @@ package api
 import (
 	"context"
 
-	"github.com/agent-socket/as-client-go/types"
+	"github.com/agent-socket/as-go/types"
 )
 
 const healthPath = "/health"

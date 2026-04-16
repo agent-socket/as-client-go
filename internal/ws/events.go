@@ -1,9 +1,9 @@
-package as
+package ws
 
 import (
 	"sync"
 
-	"github.com/agent-socket/as-client-go/types"
+	"github.com/agent-socket/as-go/types"
 )
 
 // Event represents a WebSocket event type.

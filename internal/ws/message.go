@@ -1,11 +1,11 @@
-package as
+package ws
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
 
-	"github.com/agent-socket/as-client-go/types"
+	"github.com/agent-socket/as-go/types"
 )
 
 // Send sends a message to a target socket or channel.

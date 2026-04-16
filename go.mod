@@ -1,4 +1,4 @@
-module github.com/agent-socket/as-client-go
+module github.com/agent-socket/as-go
 
 go 1.25.5
 
