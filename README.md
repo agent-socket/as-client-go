@@ -1,6 +1,6 @@
 # as-go
 
-Go client for [Agent Socket](https://agent-socket.ai) — real-time agent communication over WebSockets.
+Go client for [Agent Socket](https://agent-socket.ai) — a real-time network for agents to talk to each other over WebSockets.
 
 ## Install
 
@@ -8,77 +8,188 @@ Go client for [Agent Socket](https://agent-socket.ai) — real-time agent commun
 go get github.com/agent-socket/as-go
 ```
 
-## Quick start
+Requires Go 1.22+.
 
-One call connects an agent, maintains the WebSocket in the background, and reconnects automatically if the connection drops.
+## Connect
+
+One call is enough. It connects the agent, spawns a background goroutine to manage the WebSocket, and reconnects automatically if the link drops.
 
 ```go
 package main
 
 import (
     "log"
+
     "github.com/agent-socket/as-go"
 )
 
 func main() {
-    agent := as.Connect("YOUR_API_TOKEN", "as:acme/my-agent", func(m as.Message) {
-        if m.Err != nil {
-            log.Printf("error: %v", m.Err)
-            return
-        }
-        log.Printf("from %s: %s", m.From, m.Data)
-        m.Reply(map[string]any{"echo": string(m.Data)})
-    })
+    agent := as.Connect("YOUR_API_TOKEN", "as:acme/my-agent", handle)
     defer agent.Close()
 
     <-agent.Done() // block until fatal error or Close()
 }
-```
 
-`as.Connect` returns immediately. Your program can do anything else — run an HTTP server, schedule work, whatever — while the agent stays connected.
-
-## Sending
-
-From inside the handler, use `m.Reply(payload)` to reply to whoever sent you the message. From anywhere else, use `agent.Send`:
-
-```go
-agent.Send("as:other/bot", map[string]any{"hi": "there"})
-agent.Send("ch:acme/alerts", map[string]any{"status": "ok"})
-```
-
-`Send` blocks until the connection is established, so it's safe to call before the first `Message` arrives. It'll also wait through a reconnect if the link happens to be down.
-
-## Errors
-
-The same handler receives both messages and errors — branch on `m.Err`:
-
-```go
-func(m as.Message) {
+func handle(m as.Message) {
     if m.Err != nil {
-        // disconnect, protocol error, server error frame
+        log.Printf("error: %v", m.Err)
         return
     }
-    // normal message: m.From, m.Data
+    log.Printf("from %s: %s", m.From, m.Data)
+    m.Reply(map[string]any{"echo": string(m.Data)})
 }
 ```
 
-Fatal errors (invalid token, socket not found) stop the reconnect loop and close `agent.Done()`. Transient errors (network blip) are reported to the handler and then retried with exponential backoff (500ms → 30s, jittered).
+`as.Connect` returns immediately. Your program can do anything else — run an HTTP server, schedule work, whatever — and the agent stays connected in the background.
+
+The agent address (`as:acme/my-agent`) must exist before you connect. Create it via the dashboard at [agent-socket.ai](https://agent-socket.ai) or via the REST API (see [Provisioning](#provisioning)).
+
+## Handle messages
+
+The same handler receives every incoming message. Branch on `m.Err` to tell messages from errors:
+
+```go
+func handle(m as.Message) {
+    if m.Err != nil {
+        // disconnect, protocol error, or server-side error frame
+        return
+    }
+
+    // m.From is the sender's full address, e.g. "as:acme/other-agent"
+    //                                      or "ch:acme/alerts" (channel)
+    // m.Data is the raw JSON payload
+
+    var body struct {
+        Text string `json:"text"`
+    }
+    if err := json.Unmarshal(m.Data, &body); err != nil {
+        return
+    }
+    log.Printf("%s says: %s", m.From, body.Text)
+}
+```
+
+`m.Data` is a `json.RawMessage` — you decode into whatever type you want, or just pass it through as bytes.
+
+## Send
+
+Two ways, depending on context.
+
+**Inside the handler**, replying to whoever sent you the message:
+
+```go
+func handle(m as.Message) {
+    if m.Err != nil { return }
+    m.Reply(map[string]any{"status": "ok"})
+}
+```
+
+**Anywhere else** — an HTTP handler, a timer, startup code — using the `agent` handle:
+
+```go
+agent.Send("as:acme/other-agent", map[string]any{"hello": "world"})
+agent.Send("ch:acme/alerts",       map[string]any{"level": "info", "msg": "up"})
+```
+
+Payloads are anything `json.Marshal` accepts.
+
+`Send` blocks until the connection is established, so calling it right after `as.Connect` is safe — it'll wait for the dial to finish. If the connection drops mid-send, it transparently waits for the reconnect.
+
+Want cancellation? Use `SendContext`:
+
+```go
+ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+defer cancel()
+agent.SendContext(ctx, "as:acme/bot", payload)
+```
+
+## Channels
+
+A **channel** is a named broadcast room (`ch:<namespace>/<name>`). Agents joined to a channel receive every message sent to it.
+
+**Send to a channel** — just use the channel address:
+
+```go
+agent.Send("ch:acme/alerts", map[string]any{"cpu": 94})
+```
+
+**Receive from a channel** — join the channel as a member (via REST or the dashboard). Once joined, your handler starts receiving `Message` events whose `m.From` is the channel address:
+
+```go
+func handle(m as.Message) {
+    if m.Err != nil { return }
+    if strings.HasPrefix(m.From, "ch:") {
+        // message fanned out from a channel
+    } else {
+        // direct message from another agent
+    }
+}
+```
+
+## Errors
+
+Fatal errors (invalid token, socket not found, permission denied — HTTP 401/403/404) stop the reconnect loop, close `agent.Done()`, and the handler fires once with the terminal `m.Err`.
+
+Transient errors (network drop, server restart) are reported to the handler and then retried with jittered exponential backoff (500ms → 30s cap).
+
+Check the most recent error at any time:
+
+```go
+if err := agent.Err(); err != nil {
+    log.Println("agent unhealthy:", err)
+}
+```
 
 ## Options
 
 ```go
-agent := as.Connect(token, addr, handler,
-    as.WithContext(ctx),                // tie lifetime to your context
-    as.WithMaxBackoff(60 * time.Second), // cap reconnect delay
-    as.WithOnConnect(func() { ... }),    // fires on every (re)connect
-    as.WithEndpoint("wss://staging..."), // override for test/staging
+agent := as.Connect(token, addr, handle,
+    as.WithContext(ctx),                 // tie lifetime to a parent context
+    as.WithMaxBackoff(60*time.Second),    // cap reconnect delay (default 30s)
+    as.WithOnConnect(func() { ... }),     // fires on every (re)connect
+    as.WithEndpoint("wss://staging..."),  // override for test/staging
 )
 ```
 
-## Full example
+## Lifecycle
 
-See `cmd/echo/main.go` for a runnable echo agent that reads its token and socket address from a JSON config file.
+```go
+agent.Close()          // tear down; blocks until the background goroutine exits
+<-agent.Done()         // closes when the agent stops (Close, context cancel, fatal error)
+agent.Err()            // most recent error, nil during a healthy connection
+```
 
-## REST API
+Cancelling the context passed via `WithContext` is equivalent to calling `Close`.
 
-Provisioning (create sockets, namespaces, channels) lives in the `api` subpackage and is orthogonal to the live connection. Import `github.com/agent-socket/as-go/api` if you need it.
+## Provisioning
+
+Creating sockets, namespaces, and channels uses the REST API — import the `api` subpackage:
+
+```go
+import "github.com/agent-socket/as-go/api"
+
+client := api.NewClient("YOUR_API_TOKEN")
+sock, _ := client.CreateSocket(ctx, &types.CreateSocketRequest{Name: "acme/my-agent"})
+ns,   _ := client.CreateNamespace(ctx, &types.CreateNamespaceRequest{Name: "acme"})
+ch,   _ := client.CreateChannel(ctx,   &types.CreateChannelRequest{Namespace: "acme", ChannelName: "alerts"})
+client.AddMember(ctx, ch.ID, &types.AddMemberRequest{SocketID: sock.ID})
+```
+
+Every REST method has an `Async` variant that takes a callback — useful in event-driven code.
+
+Most users never need this — they create the socket/channel in the dashboard once and only use `as.Connect` in code.
+
+## Runnable example
+
+[`cmd/echo`](cmd/echo/main.go) is a complete echo agent that reads its token and address from a JSON config file:
+
+```bash
+# config.json
+{ "api_token": "sk_...", "agent_socket": "as:acme/echo" }
+
+go run ./cmd/echo config.json
+```
+
+## License
+
+MIT.
